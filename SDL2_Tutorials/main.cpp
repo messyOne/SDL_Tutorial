@@ -1,15 +1,19 @@
 /*This source code copyrighted by Lazy Foo' Productions (2004-2015)
 and may not be redistributed without written permission.*/
 
-//Using SDL, SDL_image, standard IO, and strings
+//Using SDL, SDL_image, standard IO, math, and strings
 #include <SDL.h>
 #include <SDL_image.h>
 #include <stdio.h>
 #include <string>
+#include <cmath>
 
 //Screen dimension constants
 const int SCREEN_WIDTH = 640;
 const int SCREEN_HEIGHT = 480;
+
+//Analog joystick dead zone
+const int JOYSTICK_DEAD_ZONE = 8000;
 
 //Texture wrapper class
 class LTexture
@@ -73,11 +77,11 @@ SDL_Window* gWindow = NULL;
 SDL_Renderer* gRenderer = NULL;
 
 //Scene textures
-LTexture gPressTexture;
-LTexture gUpTexture;
-LTexture gDownTexture;
-LTexture gLeftTexture;
-LTexture gRightTexture;
+LTexture gArrowTexture;
+
+//Game Controller 1 handler
+SDL_Joystick* gGameController = NULL;
+
 
 LTexture::LTexture()
 {
@@ -233,7 +237,7 @@ bool init()
 	bool success = true;
 
 	//Initialize SDL
-	if (SDL_Init(SDL_INIT_VIDEO) < 0)
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK) < 0)
 	{
 		printf("SDL could not initialize! SDL Error: %s\n", SDL_GetError());
 		success = false;
@@ -244,6 +248,21 @@ bool init()
 		if (!SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1"))
 		{
 			printf("Warning: Linear texture filtering not enabled!");
+		}
+
+		//Check for joysticks
+		if (SDL_NumJoysticks() < 1)
+		{
+			printf("Warning: No joysticks connected!\n");
+		}
+		else
+		{
+			//Load joystick
+			gGameController = SDL_JoystickOpen(0);
+			if (gGameController == NULL)
+			{
+				printf("Warning: Unable to open game controller! SDL Error: %s\n", SDL_GetError());
+			}
 		}
 
 		//Create window
@@ -286,38 +305,10 @@ bool loadMedia()
 	//Loading success flag
 	bool success = true;
 
-	//Load press texture
-	if (!gPressTexture.loadFromFile("assets/press.png"))
+	//Load arrow texture
+	if (!gArrowTexture.loadFromFile("assets/arrow.png"))
 	{
-		printf("Failed to load press texture!\n");
-		success = false;
-	}
-
-	//Load up texture
-	if (!gUpTexture.loadFromFile("assets/up.png"))
-	{
-		printf("Failed to load up texture!\n");
-		success = false;
-	}
-
-	//Load down texture
-	if (!gDownTexture.loadFromFile("assets/down.png"))
-	{
-		printf("Failed to load down texture!\n");
-		success = false;
-	}
-
-	//Load left texture
-	if (!gLeftTexture.loadFromFile("assets/left.png"))
-	{
-		printf("Failed to load left texture!\n");
-		success = false;
-	}
-
-	//Load right texture
-	if (!gRightTexture.loadFromFile("assets/right.png"))
-	{
-		printf("Failed to load right texture!\n");
+		printf("Failed to load arrow texture!\n");
 		success = false;
 	}
 
@@ -327,11 +318,11 @@ bool loadMedia()
 void close()
 {
 	//Free loaded images
-	gPressTexture.free();
-	gUpTexture.free();
-	gDownTexture.free();
-	gLeftTexture.free();
-	gRightTexture.free();
+	gArrowTexture.free();
+
+	//Close game controller
+	SDL_JoystickClose(gGameController);
+	gGameController = NULL;
 
 	//Destroy window	
 	SDL_DestroyRenderer(gRenderer);
@@ -366,8 +357,9 @@ int main(int argc, char* args[])
 			//Event handler
 			SDL_Event e;
 
-			//Current rendered texture
-			LTexture* currentTexture = NULL;
+			//Normalized direction
+			int xDir = 0;
+			int yDir = 0;
 
 			//While application is running
 			while (!quit)
@@ -380,37 +372,66 @@ int main(int argc, char* args[])
 					{
 						quit = true;
 					}
-				}
-
-				//Set texture based on current keystate
-				const Uint8* currentKeyStates = SDL_GetKeyboardState(NULL);
-				if (currentKeyStates[SDL_SCANCODE_UP])
-				{
-					currentTexture = &gUpTexture;
-				}
-				else if (currentKeyStates[SDL_SCANCODE_DOWN])
-				{
-					currentTexture = &gDownTexture;
-				}
-				else if (currentKeyStates[SDL_SCANCODE_LEFT])
-				{
-					currentTexture = &gLeftTexture;
-				}
-				else if (currentKeyStates[SDL_SCANCODE_RIGHT])
-				{
-					currentTexture = &gRightTexture;
-				}
-				else
-				{
-					currentTexture = &gPressTexture;
+					else if (e.type == SDL_JOYAXISMOTION)
+					{
+						//Motion on controller 0
+						if (e.jaxis.which == 0)
+						{
+							//X axis motion
+							if (e.jaxis.axis == 0)
+							{
+								//Left of dead zone
+								if (e.jaxis.value < -JOYSTICK_DEAD_ZONE)
+								{
+									xDir = -1;
+								}
+								//Right of dead zone
+								else if (e.jaxis.value > JOYSTICK_DEAD_ZONE)
+								{
+									xDir = 1;
+								}
+								else
+								{
+									xDir = 0;
+								}
+							}
+							//Y axis motion
+							else if (e.jaxis.axis == 1)
+							{
+								//Below of dead zone
+								if (e.jaxis.value < -JOYSTICK_DEAD_ZONE)
+								{
+									yDir = -1;
+								}
+								//Above of dead zone
+								else if (e.jaxis.value > JOYSTICK_DEAD_ZONE)
+								{
+									yDir = 1;
+								}
+								else
+								{
+									yDir = 0;
+								}
+							}
+						}
+					}
 				}
 
 				//Clear screen
 				SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
 				SDL_RenderClear(gRenderer);
 
-				//Render current texture
-				currentTexture->render(0, 0);
+				//Calculate angle
+				double joystickAngle = atan2((double)yDir, (double)xDir) * (180.0 / M_PI);
+
+				//Correct angle
+				if (xDir == 0 && yDir == 0)
+				{
+					joystickAngle = 0;
+				}
+
+				//Render joystick 8 way angle
+				gArrowTexture.render((SCREEN_WIDTH - gArrowTexture.getWidth()) / 2, (SCREEN_HEIGHT - gArrowTexture.getHeight()) / 2, NULL, joystickAngle);
 
 				//Update screen
 				SDL_RenderPresent(gRenderer);
