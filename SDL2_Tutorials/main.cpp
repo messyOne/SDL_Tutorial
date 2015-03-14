@@ -12,6 +12,8 @@ and may not be redistributed without written permission.*/
 //Screen dimension constants
 const int SCREEN_WIDTH = 640;
 const int SCREEN_HEIGHT = 480;
+const int SCREEN_FPS = 60;
+const int SCREEN_TICK_PER_FRAME = 1000 / SCREEN_FPS;
 
 //Texture wrapper class
 class LTexture
@@ -370,7 +372,7 @@ bool init()
 	//Initialize SDL
 	if (SDL_Init(SDL_INIT_VIDEO) < 0)
 	{
-		printf("SDL could not initialize! SDL Error: %s\n", SDL_GetError());
+		printf("SDL could not initialize! %s\n", SDL_GetError());
 		success = false;
 	}
 	else
@@ -390,8 +392,8 @@ bool init()
 		}
 		else
 		{
-			//Create vsynced renderer for window
-			gRenderer = SDL_CreateRenderer(gWindow, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+			//Create renderer for window
+			gRenderer = SDL_CreateRenderer(gWindow, -1, SDL_RENDERER_ACCELERATED);
 			if (gRenderer == NULL)
 			{
 				printf("Renderer could not be created! SDL Error: %s\n", SDL_GetError());
@@ -488,6 +490,9 @@ int main(int argc, char* args[])
 			//The frames per second timer
 			LTimer fpsTimer;
 
+			//The frames per second cap timer
+			LTimer capTimer;
+
 			//In memory text stream
 			std::stringstream timeText;
 
@@ -498,6 +503,9 @@ int main(int argc, char* args[])
 			//While application is running
 			while (!quit)
 			{
+				//Start cap timer
+				capTimer.start();
+
 				//Handle events on queue
 				while (SDL_PollEvent(&e) != 0)
 				{
@@ -517,7 +525,7 @@ int main(int argc, char* args[])
 
 				//Set text to be rendered
 				timeText.str("");
-				timeText << "Average Frames Per Second " << avgFPS;
+				timeText << "Average Frames Per Second (With Cap) " << avgFPS;
 
 				//Render text
 				if (!gFPSTextTexture.loadFromRenderedText(timeText.str().c_str(), textColor))
@@ -535,6 +543,14 @@ int main(int argc, char* args[])
 				//Update screen
 				SDL_RenderPresent(gRenderer);
 				++countedFrames;
+
+				//If frame finished early
+				int frameTicks = capTimer.getTicks();
+				if (frameTicks < SCREEN_TICK_PER_FRAME)
+				{
+					//Wait remaining time
+					SDL_Delay(SCREEN_TICK_PER_FRAME - frameTicks);
+				}
 			}
 		}
 	}
