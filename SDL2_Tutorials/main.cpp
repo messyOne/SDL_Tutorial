@@ -1,11 +1,13 @@
 /*This source code copyrighted by Lazy Foo' Productions (2004-2015)
 and may not be redistributed without written permission.*/
 
-//Using SDL, SDL_image, standard IO, vectors, and strings
+//Using SDL, SDL_image, SDL_ttf, standard IO, strings, and string streams
 #include <SDL.h>
 #include <SDL_image.h>
+#include <SDL_ttf.h>
 #include <stdio.h>
 #include <string>
+#include <sstream>
 
 //Screen dimension constants
 const int SCREEN_WIDTH = 640;
@@ -57,37 +59,6 @@ private:
 	int mHeight;
 };
 
-//The dot that will move around on the screen
-class Dot
-{
-public:
-	//The dimensions of the dot
-	static const int DOT_WIDTH = 20;
-	static const int DOT_HEIGHT = 20;
-
-	//Maximum axis velocity of the dot
-	static const int DOT_VEL = 10;
-
-	//Initializes the variables
-	Dot();
-
-	//Takes key presses and adjusts the dot's velocity
-	void handleEvent(SDL_Event& e);
-
-	//Moves the dot
-	void move();
-
-	//Shows the dot on the screen
-	void render();
-
-private:
-	//The X and Y offsets of the dot
-	int mPosX, mPosY;
-
-	//The velocity of the dot
-	int mVelX, mVelY;
-};
-
 //Starts up SDL and creates window
 bool init();
 
@@ -103,9 +74,12 @@ SDL_Window* gWindow = NULL;
 //The window renderer
 SDL_Renderer* gRenderer = NULL;
 
+//Globally used font
+TTF_Font *gFont = NULL;
+
 //Scene textures
-LTexture gDotTexture;
-LTexture gBGTexture;
+LTexture gPromptTextTexture;
+LTexture gInputTextTexture;
 
 LTexture::LTexture()
 {
@@ -255,74 +229,6 @@ int LTexture::getHeight()
 	return mHeight;
 }
 
-Dot::Dot()
-{
-	//Initialize the offsets
-	mPosX = 0;
-	mPosY = 0;
-
-	//Initialize the velocity
-	mVelX = 0;
-	mVelY = 0;
-}
-
-void Dot::handleEvent(SDL_Event& e)
-{
-	//If a key was pressed
-	if (e.type == SDL_KEYDOWN && e.key.repeat == 0)
-	{
-		//Adjust the velocity
-		switch (e.key.keysym.sym)
-		{
-		case SDLK_UP: mVelY -= DOT_VEL; break;
-		case SDLK_DOWN: mVelY += DOT_VEL; break;
-		case SDLK_LEFT: mVelX -= DOT_VEL; break;
-		case SDLK_RIGHT: mVelX += DOT_VEL; break;
-		}
-	}
-	//If a key was released
-	else if (e.type == SDL_KEYUP && e.key.repeat == 0)
-	{
-		//Adjust the velocity
-		switch (e.key.keysym.sym)
-		{
-		case SDLK_UP: mVelY += DOT_VEL; break;
-		case SDLK_DOWN: mVelY -= DOT_VEL; break;
-		case SDLK_LEFT: mVelX += DOT_VEL; break;
-		case SDLK_RIGHT: mVelX -= DOT_VEL; break;
-		}
-	}
-}
-
-void Dot::move()
-{
-	//Move the dot left or right
-	mPosX += mVelX;
-
-	//If the dot went too far to the left or right
-	if ((mPosX < 0) || (mPosX + DOT_WIDTH > SCREEN_WIDTH))
-	{
-		//Move back
-		mPosX -= mVelX;
-	}
-
-	//Move the dot up or down
-	mPosY += mVelY;
-
-	//If the dot went too far up or down
-	if ((mPosY < 0) || (mPosY + DOT_HEIGHT > SCREEN_HEIGHT))
-	{
-		//Move back
-		mPosY -= mVelY;
-	}
-}
-
-void Dot::render()
-{
-	//Show the dot
-	gDotTexture.render(mPosX, mPosY);
-}
-
 bool init()
 {
 	//Initialization flag
@@ -370,6 +276,13 @@ bool init()
 					printf("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
 					success = false;
 				}
+
+				//Initialize SDL_ttf
+				if (TTF_Init() == -1)
+				{
+					printf("SDL_ttf could not initialize! SDL_ttf Error: %s\n", TTF_GetError());
+					success = false;
+				}
 			}
 		}
 	}
@@ -382,18 +295,22 @@ bool loadMedia()
 	//Loading success flag
 	bool success = true;
 
-	//Load dot texture
-	if (!gDotTexture.loadFromFile("assets/dot.bmp"))
+	//Open the font
+	gFont = TTF_OpenFont("assets/lazy.ttf", 28);
+	if (gFont == NULL)
 	{
-		printf("Failed to load dot texture!\n");
+		printf("Failed to load lazy font! SDL_ttf Error: %s\n", TTF_GetError());
 		success = false;
 	}
-
-	//Load background texture
-	if (!gBGTexture.loadFromFile("assets/bg2.png"))
+	else
 	{
-		printf("Failed to load background texture!\n");
-		success = false;
+		//Render the prompt
+		SDL_Color textColor = { 0, 0, 0, 0xFF };
+		if (!gPromptTextTexture.loadFromRenderedText("Enter Text:", textColor))
+		{
+			printf("Failed to render prompt text!\n");
+			success = false;
+		}
 	}
 
 	return success;
@@ -402,8 +319,12 @@ bool loadMedia()
 void close()
 {
 	//Free loaded images
-	gDotTexture.free();
-	gBGTexture.free();
+	gPromptTextTexture.free();
+	gInputTextTexture.free();
+
+	//Free global font
+	TTF_CloseFont(gFont);
+	gFont = NULL;
 
 	//Destroy window	
 	SDL_DestroyRenderer(gRenderer);
@@ -412,6 +333,7 @@ void close()
 	gRenderer = NULL;
 
 	//Quit SDL subsystems
+	TTF_Quit();
 	IMG_Quit();
 	SDL_Quit();
 }
@@ -438,15 +360,22 @@ int main(int argc, char* args[])
 			//Event handler
 			SDL_Event e;
 
-			//The dot that will be moving around on the screen
-			Dot dot;
+			//Set text color as black
+			SDL_Color textColor = { 0, 0, 0, 0xFF };
 
-			//The background scrolling offset
-			int scrollingOffset = 0;
+			//The current input text.
+			std::string inputText = "Some Text";
+			gInputTextTexture.loadFromRenderedText(inputText.c_str(), textColor);
+
+			//Enable text input
+			SDL_StartTextInput();
 
 			//While application is running
 			while (!quit)
 			{
+				//The rerender text flag
+				bool renderText = false;
+
 				//Handle events on queue
 				while (SDL_PollEvent(&e) != 0)
 				{
@@ -455,35 +384,72 @@ int main(int argc, char* args[])
 					{
 						quit = true;
 					}
-
-					//Handle input for the dot
-					dot.handleEvent(e);
+					//Special key input
+					else if (e.type == SDL_KEYDOWN)
+					{
+						//Handle backspace
+						if (e.key.keysym.sym == SDLK_BACKSPACE && inputText.length() > 0)
+						{
+							//lop off character
+							inputText.pop_back();
+							renderText = true;
+						}
+						//Handle copy
+						else if (e.key.keysym.sym == SDLK_c && SDL_GetModState() & KMOD_CTRL)
+						{
+							SDL_SetClipboardText(inputText.c_str());
+						}
+						//Handle paste
+						else if (e.key.keysym.sym == SDLK_v && SDL_GetModState() & KMOD_CTRL)
+						{
+							inputText = SDL_GetClipboardText();
+							renderText = true;
+						}
+					}
+					//Special text input event
+					else if (e.type == SDL_TEXTINPUT)
+					{
+						//Not copy or pasting
+						if (!((e.text.text[0] == 'c' || e.text.text[0] == 'C') && (e.text.text[0] == 'v' || e.text.text[0] == 'V') && SDL_GetModState() & KMOD_CTRL))
+						{
+							//Append character
+							inputText += e.text.text;
+							renderText = true;
+						}
+					}
 				}
 
-				//Move the dot
-				dot.move();
-
-				//Scroll background
-				--scrollingOffset;
-				if (scrollingOffset < -gBGTexture.getWidth())
+				//Rerender text if needed
+				if (renderText)
 				{
-					scrollingOffset = 0;
+					//Text is not empty
+					if (inputText != "")
+					{
+						//Render new text
+						gInputTextTexture.loadFromRenderedText(inputText.c_str(), textColor);
+					}
+					//Text is empty
+					else
+					{
+						//Render space texture
+						gInputTextTexture.loadFromRenderedText(" ", textColor);
+					}
 				}
 
 				//Clear screen
 				SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
 				SDL_RenderClear(gRenderer);
 
-				//Render background
-				gBGTexture.render(scrollingOffset, 0);
-				gBGTexture.render(scrollingOffset + gBGTexture.getWidth(), 0);
-
-				//Render objects
-				dot.render();
+				//Render text textures
+				gPromptTextTexture.render((SCREEN_WIDTH - gPromptTextTexture.getWidth()) / 2, 0);
+				gInputTextTexture.render((SCREEN_WIDTH - gInputTextTexture.getWidth()) / 2, gPromptTextTexture.getHeight());
 
 				//Update screen
 				SDL_RenderPresent(gRenderer);
 			}
+
+			//Disable text input
+			SDL_StopTextInput();
 		}
 	}
 
