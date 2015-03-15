@@ -7,10 +7,6 @@ and may not be redistributed without written permission.*/
 #include <stdio.h>
 #include <string>
 
-//The dimensions of the level
-const int LEVEL_WIDTH = 1280;
-const int LEVEL_HEIGHT = 960;
-
 //Screen dimension constants
 const int SCREEN_WIDTH = 640;
 const int SCREEN_HEIGHT = 480;
@@ -81,12 +77,8 @@ public:
 	//Moves the dot
 	void move();
 
-	//Shows the dot on the screen relative to the camera
-	void render(int camX, int camY);
-
-	//Position accessors
-	int getPosX();
-	int getPosY();
+	//Shows the dot on the screen
+	void render();
 
 private:
 	//The X and Y offsets of the dot
@@ -308,7 +300,7 @@ void Dot::move()
 	mPosX += mVelX;
 
 	//If the dot went too far to the left or right
-	if ((mPosX < 0) || (mPosX + DOT_WIDTH > LEVEL_WIDTH))
+	if ((mPosX < 0) || (mPosX + DOT_WIDTH > SCREEN_WIDTH))
 	{
 		//Move back
 		mPosX -= mVelX;
@@ -318,27 +310,17 @@ void Dot::move()
 	mPosY += mVelY;
 
 	//If the dot went too far up or down
-	if ((mPosY < 0) || (mPosY + DOT_HEIGHT > LEVEL_HEIGHT))
+	if ((mPosY < 0) || (mPosY + DOT_HEIGHT > SCREEN_HEIGHT))
 	{
 		//Move back
 		mPosY -= mVelY;
 	}
 }
 
-void Dot::render(int camX, int camY)
+void Dot::render()
 {
-	//Show the dot relative to the camera
-	gDotTexture.render(mPosX - camX, mPosY - camY);
-}
-
-int Dot::getPosX()
-{
-	return mPosX;
-}
-
-int Dot::getPosY()
-{
-	return mPosY;
+	//Show the dot
+	gDotTexture.render(mPosX, mPosY);
 }
 
 bool init()
@@ -408,7 +390,7 @@ bool loadMedia()
 	}
 
 	//Load background texture
-	if (!gBGTexture.loadFromFile("assets/bg.png"))
+	if (!gBGTexture.loadFromFile("assets/bg2.png"))
 	{
 		printf("Failed to load background texture!\n");
 		success = false;
@@ -459,8 +441,8 @@ int main(int argc, char* args[])
 			//The dot that will be moving around on the screen
 			Dot dot;
 
-			//The camera area
-			SDL_Rect camera = { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
+			//The background scrolling offset
+			int scrollingOffset = 0;
 
 			//While application is running
 			while (!quit)
@@ -481,26 +463,11 @@ int main(int argc, char* args[])
 				//Move the dot
 				dot.move();
 
-				//Center the camera over the dot
-				camera.x = (dot.getPosX() + Dot::DOT_WIDTH / 2) - SCREEN_WIDTH / 2;
-				camera.y = (dot.getPosY() + Dot::DOT_HEIGHT / 2) - SCREEN_HEIGHT / 2;
-
-				//Keep the camera in bounds
-				if (camera.x < 0)
+				//Scroll background
+				--scrollingOffset;
+				if (scrollingOffset < -gBGTexture.getWidth())
 				{
-					camera.x = 0;
-				}
-				if (camera.y < 0)
-				{
-					camera.y = 0;
-				}
-				if (camera.x > LEVEL_WIDTH - camera.w)
-				{
-					camera.x = LEVEL_WIDTH - camera.w;
-				}
-				if (camera.y > LEVEL_HEIGHT - camera.h)
-				{
-					camera.y = LEVEL_HEIGHT - camera.h;
+					scrollingOffset = 0;
 				}
 
 				//Clear screen
@@ -508,10 +475,11 @@ int main(int argc, char* args[])
 				SDL_RenderClear(gRenderer);
 
 				//Render background
-				gBGTexture.render(0, 0, &camera);
+				gBGTexture.render(scrollingOffset, 0);
+				gBGTexture.render(scrollingOffset + gBGTexture.getWidth(), 0);
 
 				//Render objects
-				dot.render(camera.x, camera.y);
+				dot.render();
 
 				//Update screen
 				SDL_RenderPresent(gRenderer);
