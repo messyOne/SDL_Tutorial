@@ -1,10 +1,9 @@
 /*This source code copyrighted by Lazy Foo' Productions (2004-2015)
 and may not be redistributed without written permission.*/
 
-//Using SDL, SDL_image, SDL_ttf, standard IO, strings, and string streams
+//Using SDL, SDL_image, standard IO, strings, and string streams
 #include <SDL.h>
 #include <SDL_image.h>
-#include <SDL_ttf.h>
 #include <stdio.h>
 #include <string>
 #include <sstream>
@@ -12,9 +11,6 @@ and may not be redistributed without written permission.*/
 //Screen dimension constants
 const int SCREEN_WIDTH = 640;
 const int SCREEN_HEIGHT = 480;
-
-//Number of data integers
-const int TOTAL_DATA = 10;
 
 //Texture wrapper class
 class LTexture
@@ -62,6 +58,48 @@ private:
 	int mHeight;
 };
 
+class LWindow
+{
+public:
+	//Intializes internals
+	LWindow();
+
+	//Creates window
+	bool init();
+
+	//Creates renderer from internal window
+	SDL_Renderer* createRenderer();
+
+	//Handles window events
+	void handleEvent(SDL_Event& e);
+
+	//Deallocates internals
+	void free();
+
+	//Window dimensions
+	int getWidth();
+	int getHeight();
+
+	//Window focii
+	bool hasMouseFocus();
+	bool hasKeyboardFocus();
+	bool isMinimized();
+
+private:
+	//Window data
+	SDL_Window* mWindow;
+
+	//Window dimensions
+	int mWidth;
+	int mHeight;
+
+	//Window focus
+	bool mMouseFocus;
+	bool mKeyboardFocus;
+	bool mFullScreen;
+	bool mMinimized;
+};
+
 //Starts up SDL and creates window
 bool init();
 
@@ -71,21 +109,15 @@ bool loadMedia();
 //Frees media and shuts down SDL
 void close();
 
-//The window we'll be rendering to
-SDL_Window* gWindow = NULL;
+//Our custom window
+LWindow gWindow;
 
 //The window renderer
 SDL_Renderer* gRenderer = NULL;
 
-//Globally used font
-TTF_Font *gFont = NULL;
-
 //Scene textures
-LTexture gPromptTextTexture;
-LTexture gDataTextures[TOTAL_DATA];
+LTexture gSceneTexture;
 
-//Data points
-Sint32 gData[TOTAL_DATA];
 
 LTexture::LTexture()
 {
@@ -235,6 +267,163 @@ int LTexture::getHeight()
 	return mHeight;
 }
 
+LWindow::LWindow()
+{
+	//Initialize non-existant window
+	mWindow = NULL;
+	mMouseFocus = false;
+	mKeyboardFocus = false;
+	mFullScreen = false;
+	mMinimized = false;
+	mWidth = 0;
+	mHeight = 0;
+}
+
+bool LWindow::init()
+{
+	//Create window
+	mWindow = SDL_CreateWindow("SDL Tutorial", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+	if (mWindow != NULL)
+	{
+		mMouseFocus = true;
+		mKeyboardFocus = true;
+		mWidth = SCREEN_WIDTH;
+		mHeight = SCREEN_HEIGHT;
+	}
+
+	return mWindow != NULL;
+}
+
+SDL_Renderer* LWindow::createRenderer()
+{
+	return SDL_CreateRenderer(mWindow, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+}
+
+void LWindow::handleEvent(SDL_Event& e)
+{
+	//Window event occured
+	if (e.type == SDL_WINDOWEVENT)
+	{
+		//Caption update flag
+		bool updateCaption = false;
+
+		switch (e.window.event)
+		{
+			//Get new dimensions and repaint on window size change
+		case SDL_WINDOWEVENT_SIZE_CHANGED:
+			mWidth = e.window.data1;
+			mHeight = e.window.data2;
+			SDL_RenderPresent(gRenderer);
+			break;
+
+			//Repaint on exposure
+		case SDL_WINDOWEVENT_EXPOSED:
+			SDL_RenderPresent(gRenderer);
+			break;
+
+			//Mouse entered window
+		case SDL_WINDOWEVENT_ENTER:
+			mMouseFocus = true;
+			updateCaption = true;
+			break;
+
+			//Mouse left window
+		case SDL_WINDOWEVENT_LEAVE:
+			mMouseFocus = false;
+			updateCaption = true;
+			break;
+
+			//Window has keyboard focus
+		case SDL_WINDOWEVENT_FOCUS_GAINED:
+			mKeyboardFocus = true;
+			updateCaption = true;
+			break;
+
+			//Window lost keyboard focus
+		case SDL_WINDOWEVENT_FOCUS_LOST:
+			mKeyboardFocus = false;
+			updateCaption = true;
+			break;
+
+			//Window minimized
+		case SDL_WINDOWEVENT_MINIMIZED:
+			mMinimized = true;
+			break;
+
+			//Window maxized
+		case SDL_WINDOWEVENT_MAXIMIZED:
+			mMinimized = false;
+			break;
+
+			//Window restored
+		case SDL_WINDOWEVENT_RESTORED:
+			mMinimized = false;
+			break;
+		}
+
+		//Update window caption with new data
+		if (updateCaption)
+		{
+			std::stringstream caption;
+			caption << "SDL Tutorial - MouseFocus:" << ((mMouseFocus) ? "On" : "Off") << " KeyboardFocus:" << ((mKeyboardFocus) ? "On" : "Off");
+			SDL_SetWindowTitle(mWindow, caption.str().c_str());
+		}
+	}
+	//Enter exit full screen on return key
+	else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RETURN)
+	{
+		if (mFullScreen)
+		{
+			SDL_SetWindowFullscreen(mWindow, SDL_FALSE);
+			mFullScreen = false;
+		}
+		else
+		{
+			SDL_SetWindowFullscreen(mWindow, SDL_TRUE);
+			mFullScreen = true;
+			mMinimized = false;
+		}
+	}
+}
+
+void LWindow::free()
+{
+	if (mWindow != NULL)
+	{
+		SDL_DestroyWindow(mWindow);
+	}
+
+	mMouseFocus = false;
+	mKeyboardFocus = false;
+	mWidth = 0;
+	mHeight = 0;
+}
+
+int LWindow::getWidth()
+{
+	return mWidth;
+}
+
+int LWindow::getHeight()
+{
+	return mHeight;
+}
+
+bool LWindow::hasMouseFocus()
+{
+	return mMouseFocus;
+}
+
+bool LWindow::hasKeyboardFocus()
+{
+	return mKeyboardFocus;
+}
+
+bool LWindow::isMinimized()
+{
+	return mMinimized;
+}
+
 bool init()
 {
 	//Initialization flag
@@ -255,16 +444,15 @@ bool init()
 		}
 
 		//Create window
-		gWindow = SDL_CreateWindow("SDL Tutorial", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN);
-		if (gWindow == NULL)
+		if (!gWindow.init())
 		{
 			printf("Window could not be created! SDL Error: %s\n", SDL_GetError());
 			success = false;
 		}
 		else
 		{
-			//Create vsynced renderer for window
-			gRenderer = SDL_CreateRenderer(gWindow, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+			//Create renderer for window
+			gRenderer = gWindow.createRenderer();
 			if (gRenderer == NULL)
 			{
 				printf("Renderer could not be created! SDL Error: %s\n", SDL_GetError());
@@ -282,13 +470,6 @@ bool init()
 					printf("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
 					success = false;
 				}
-
-				//Initialize SDL_ttf
-				if (TTF_Init() == -1)
-				{
-					printf("SDL_ttf could not initialize! SDL_ttf Error: %s\n", TTF_GetError());
-					success = false;
-				}
 			}
 		}
 	}
@@ -298,79 +479,14 @@ bool init()
 
 bool loadMedia()
 {
-	//Text rendering color
-	SDL_Color textColor = { 0, 0, 0, 0xFF };
-	SDL_Color highlightColor = { 0xFF, 0, 0, 0xFF };
-
 	//Loading success flag
 	bool success = true;
 
-	//Open the font
-	gFont = TTF_OpenFont("assets/lazy.ttf", 28);
-	if (gFont == NULL)
+	//Load scene texture
+	if (!gSceneTexture.loadFromFile("assets/window.png"))
 	{
-		printf("Failed to load lazy font! SDL_ttf Error: %s\n", TTF_GetError());
+		printf("Failed to load window texture!\n");
 		success = false;
-	}
-	else
-	{
-		//Render the prompt
-		if (!gPromptTextTexture.loadFromRenderedText("Enter Data:", textColor))
-		{
-			printf("Failed to render prompt text!\n");
-			success = false;
-		}
-	}
-
-	//Open file for reading in binary
-	SDL_RWops* file = SDL_RWFromFile("assets/nums.bin", "r+b");
-
-	//File does not exist
-	if (file == NULL)
-	{
-		printf("Warning: Unable to open file! SDL Error: %s\n", SDL_GetError());
-
-		//Create file for writing
-		file = SDL_RWFromFile("assets/nums.bin", "w+b");
-		if (file != NULL)
-		{
-			printf("New file created!\n");
-
-			//Initialize data
-			for (int i = 0; i < TOTAL_DATA; ++i)
-			{
-				gData[i] = 0;
-				SDL_RWwrite(file, &gData[i], sizeof(Sint32), 1);
-			}
-
-			//Close file handler
-			SDL_RWclose(file);
-		}
-		else
-		{
-			printf("Error: Unable to create file! SDL Error: %s\n", SDL_GetError());
-			success = false;
-		}
-	}
-	//File exists
-	else
-	{
-		//Load data
-		printf("Reading file...!\n");
-		for (int i = 0; i < TOTAL_DATA; ++i)
-		{
-			SDL_RWread(file, &gData[i], sizeof(Sint32), 1);
-		}
-
-		//Close file handler
-		SDL_RWclose(file);
-	}
-
-	//Initialize data textures
-	gDataTextures[0].loadFromRenderedText(std::to_string((_Longlong)gData[0]), highlightColor);
-	for (int i = 1; i < TOTAL_DATA; ++i)
-	{
-		gDataTextures[i].loadFromRenderedText(std::to_string((_Longlong)gData[i]), textColor);
 	}
 
 	return success;
@@ -378,43 +494,14 @@ bool loadMedia()
 
 void close()
 {
-	//Open data for writing
-	SDL_RWops* file = SDL_RWFromFile("assets/nums.bin", "w+b");
-	if (file != NULL)
-	{
-		//Save data
-		for (int i = 0; i < TOTAL_DATA; ++i)
-		{
-			SDL_RWwrite(file, &gData[i], sizeof(Sint32), 1);
-		}
-
-		//Close file handler
-		SDL_RWclose(file);
-	}
-	else
-	{
-		printf("Error: Unable to save file! %s\n", SDL_GetError());
-	}
-
 	//Free loaded images
-	gPromptTextTexture.free();
-	for (int i = 0; i < TOTAL_DATA; ++i)
-	{
-		gDataTextures[i].free();
-	}
-
-	//Free global font
-	TTF_CloseFont(gFont);
-	gFont = NULL;
+	gSceneTexture.free();
 
 	//Destroy window	
 	SDL_DestroyRenderer(gRenderer);
-	SDL_DestroyWindow(gWindow);
-	gWindow = NULL;
-	gRenderer = NULL;
+	gWindow.free();
 
 	//Quit SDL subsystems
-	TTF_Quit();
 	IMG_Quit();
 	SDL_Quit();
 }
@@ -441,13 +528,6 @@ int main(int argc, char* args[])
 			//Event handler
 			SDL_Event e;
 
-			//Text rendering color
-			SDL_Color textColor = { 0, 0, 0, 0xFF };
-			SDL_Color highlightColor = { 0xFF, 0, 0, 0xFF };
-
-			//Current input point
-			int currentData = 0;
-
 			//While application is running
 			while (!quit)
 			{
@@ -459,66 +539,24 @@ int main(int argc, char* args[])
 					{
 						quit = true;
 					}
-					else if (e.type == SDL_KEYDOWN)
-					{
-						switch (e.key.keysym.sym)
-						{
-							//Previous data entry
-						case SDLK_UP:
-							//Rerender previous entry input point
-							gDataTextures[currentData].loadFromRenderedText(std::to_string((_Longlong)gData[currentData]), textColor);
-							--currentData;
-							if (currentData < 0)
-							{
-								currentData = TOTAL_DATA - 1;
-							}
 
-							//Rerender current entry input point
-							gDataTextures[currentData].loadFromRenderedText(std::to_string((_Longlong)gData[currentData]), highlightColor);
-							break;
-
-							//Next data entry
-						case SDLK_DOWN:
-							//Rerender previous entry input point
-							gDataTextures[currentData].loadFromRenderedText(std::to_string((_Longlong)gData[currentData]), textColor);
-							++currentData;
-							if (currentData == TOTAL_DATA)
-							{
-								currentData = 0;
-							}
-
-							//Rerender current entry input point
-							gDataTextures[currentData].loadFromRenderedText(std::to_string((_Longlong)gData[currentData]), highlightColor);
-							break;
-
-							//Decrement input point
-						case SDLK_LEFT:
-							--gData[currentData];
-							gDataTextures[currentData].loadFromRenderedText(std::to_string((_Longlong)gData[currentData]), highlightColor);
-							break;
-
-							//Increment input point
-						case SDLK_RIGHT:
-							++gData[currentData];
-							gDataTextures[currentData].loadFromRenderedText(std::to_string((_Longlong)gData[currentData]), highlightColor);
-							break;
-						}
-					}
+					//Handle window events
+					gWindow.handleEvent(e);
 				}
 
-				//Clear screen
-				SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
-				SDL_RenderClear(gRenderer);
-
-				//Render text textures
-				gPromptTextTexture.render((SCREEN_WIDTH - gPromptTextTexture.getWidth()) / 2, 0);
-				for (int i = 0; i < TOTAL_DATA; ++i)
+				//Only draw when not minimized
+				if (!gWindow.isMinimized())
 				{
-					gDataTextures[i].render((SCREEN_WIDTH - gDataTextures[i].getWidth()) / 2, gPromptTextTexture.getHeight() + gDataTextures[0].getHeight() * i);
-				}
+					//Clear screen
+					SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
+					SDL_RenderClear(gRenderer);
 
-				//Update screen
-				SDL_RenderPresent(gRenderer);
+					//Render text textures
+					gSceneTexture.render((gWindow.getWidth() - gSceneTexture.getWidth()) / 2, (gWindow.getHeight() - gSceneTexture.getHeight()) / 2);
+
+					//Update screen
+					SDL_RenderPresent(gRenderer);
+				}
 			}
 		}
 	}
