@@ -1,9 +1,8 @@
 /*This source code copyrighted by Lazy Foo' Productions (2004-2015)
 and may not be redistributed without written permission.*/
 
-//Using SDL, SDL_image, standard IO, strings, and string streams
+//Using SDL, standard IO, strings, and string streams
 #include <SDL.h>
-#include <SDL_image.h>
 #include <stdio.h>
 #include <string>
 #include <sstream>
@@ -12,51 +11,8 @@ and may not be redistributed without written permission.*/
 const int SCREEN_WIDTH = 640;
 const int SCREEN_HEIGHT = 480;
 
-//Texture wrapper class
-class LTexture
-{
-public:
-	//Initializes variables
-	LTexture();
-
-	//Deallocates memory
-	~LTexture();
-
-	//Loads image at specified path
-	bool loadFromFile(std::string path);
-
-#ifdef _SDL_TTF_H
-	//Creates image from font string
-	bool loadFromRenderedText(std::string textureText, SDL_Color textColor);
-#endif
-
-	//Deallocates texture
-	void free();
-
-	//Set color modulation
-	void setColor(Uint8 red, Uint8 green, Uint8 blue);
-
-	//Set blending
-	void setBlendMode(SDL_BlendMode blending);
-
-	//Set alpha modulation
-	void setAlpha(Uint8 alpha);
-
-	//Renders texture at given point
-	void render(int x, int y, SDL_Rect* clip = NULL, double angle = 0.0, SDL_Point* center = NULL, SDL_RendererFlip flip = SDL_FLIP_NONE);
-
-	//Gets image dimensions
-	int getWidth();
-	int getHeight();
-
-private:
-	//The actual hardware texture
-	SDL_Texture* mTexture;
-
-	//Image dimensions
-	int mWidth;
-	int mHeight;
-};
+//Total windows
+const int TOTAL_WINDOWS = 3;
 
 class LWindow
 {
@@ -67,11 +23,14 @@ public:
 	//Creates window
 	bool init();
 
-	//Creates renderer from internal window
-	SDL_Renderer* createRenderer();
-
 	//Handles window events
 	void handleEvent(SDL_Event& e);
+
+	//Focuses on window
+	void focus();
+
+	//Shows windows contents
+	void render();
 
 	//Deallocates internals
 	void free();
@@ -84,10 +43,13 @@ public:
 	bool hasMouseFocus();
 	bool hasKeyboardFocus();
 	bool isMinimized();
+	bool isShown();
 
 private:
 	//Window data
 	SDL_Window* mWindow;
+	SDL_Renderer* mRenderer;
+	int mWindowID;
 
 	//Window dimensions
 	int mWidth;
@@ -98,183 +60,30 @@ private:
 	bool mKeyboardFocus;
 	bool mFullScreen;
 	bool mMinimized;
+	bool mShown;
 };
 
 //Starts up SDL and creates window
 bool init();
 
-//Loads media
-bool loadMedia();
-
 //Frees media and shuts down SDL
 void close();
 
-//Our custom window
-LWindow gWindow;
-
-//The window renderer
-SDL_Renderer* gRenderer = NULL;
-
-//Scene textures
-LTexture gSceneTexture;
-
-
-LTexture::LTexture()
-{
-	//Initialize
-	mTexture = NULL;
-	mWidth = 0;
-	mHeight = 0;
-}
-
-LTexture::~LTexture()
-{
-	//Deallocate
-	free();
-}
-
-bool LTexture::loadFromFile(std::string path)
-{
-	//Get rid of preexisting texture
-	free();
-
-	//The final texture
-	SDL_Texture* newTexture = NULL;
-
-	//Load image at specified path
-	SDL_Surface* loadedSurface = IMG_Load(path.c_str());
-	if (loadedSurface == NULL)
-	{
-		printf("Unable to load image %s! SDL_image Error: %s\n", path.c_str(), IMG_GetError());
-	}
-	else
-	{
-		//Color key image
-		SDL_SetColorKey(loadedSurface, SDL_TRUE, SDL_MapRGB(loadedSurface->format, 0, 0xFF, 0xFF));
-
-		//Create texture from surface pixels
-		newTexture = SDL_CreateTextureFromSurface(gRenderer, loadedSurface);
-		if (newTexture == NULL)
-		{
-			printf("Unable to create texture from %s! SDL Error: %s\n", path.c_str(), SDL_GetError());
-		}
-		else
-		{
-			//Get image dimensions
-			mWidth = loadedSurface->w;
-			mHeight = loadedSurface->h;
-		}
-
-		//Get rid of old loaded surface
-		SDL_FreeSurface(loadedSurface);
-	}
-
-	//Return success
-	mTexture = newTexture;
-	return mTexture != NULL;
-}
-
-#ifdef _SDL_TTF_H
-bool LTexture::loadFromRenderedText(std::string textureText, SDL_Color textColor)
-{
-	//Get rid of preexisting texture
-	free();
-
-	//Render text surface
-	SDL_Surface* textSurface = TTF_RenderText_Solid(gFont, textureText.c_str(), textColor);
-	if (textSurface != NULL)
-	{
-		//Create texture from surface pixels
-		mTexture = SDL_CreateTextureFromSurface(gRenderer, textSurface);
-		if (mTexture == NULL)
-		{
-			printf("Unable to create texture from rendered text! SDL Error: %s\n", SDL_GetError());
-		}
-		else
-		{
-			//Get image dimensions
-			mWidth = textSurface->w;
-			mHeight = textSurface->h;
-		}
-
-		//Get rid of old surface
-		SDL_FreeSurface(textSurface);
-	}
-	else
-	{
-		printf("Unable to render text surface! SDL_ttf Error: %s\n", TTF_GetError());
-	}
-
-
-	//Return success
-	return mTexture != NULL;
-}
-#endif
-
-void LTexture::free()
-{
-	//Free texture if it exists
-	if (mTexture != NULL)
-	{
-		SDL_DestroyTexture(mTexture);
-		mTexture = NULL;
-		mWidth = 0;
-		mHeight = 0;
-	}
-}
-
-void LTexture::setColor(Uint8 red, Uint8 green, Uint8 blue)
-{
-	//Modulate texture rgb
-	SDL_SetTextureColorMod(mTexture, red, green, blue);
-}
-
-void LTexture::setBlendMode(SDL_BlendMode blending)
-{
-	//Set blending function
-	SDL_SetTextureBlendMode(mTexture, blending);
-}
-
-void LTexture::setAlpha(Uint8 alpha)
-{
-	//Modulate texture alpha
-	SDL_SetTextureAlphaMod(mTexture, alpha);
-}
-
-void LTexture::render(int x, int y, SDL_Rect* clip, double angle, SDL_Point* center, SDL_RendererFlip flip)
-{
-	//Set rendering space and render to screen
-	SDL_Rect renderQuad = { x, y, mWidth, mHeight };
-
-	//Set clip rendering dimensions
-	if (clip != NULL)
-	{
-		renderQuad.w = clip->w;
-		renderQuad.h = clip->h;
-	}
-
-	//Render to screen
-	SDL_RenderCopyEx(gRenderer, mTexture, clip, &renderQuad, angle, center, flip);
-}
-
-int LTexture::getWidth()
-{
-	return mWidth;
-}
-
-int LTexture::getHeight()
-{
-	return mHeight;
-}
+//Our custom windows
+LWindow gWindows[TOTAL_WINDOWS];
 
 LWindow::LWindow()
 {
 	//Initialize non-existant window
 	mWindow = NULL;
+	mRenderer = NULL;
+
 	mMouseFocus = false;
 	mKeyboardFocus = false;
 	mFullScreen = false;
-	mMinimized = false;
+	mShown = false;
+	mWindowID = -1;
+
 	mWidth = 0;
 	mHeight = 0;
 }
@@ -289,57 +98,86 @@ bool LWindow::init()
 		mKeyboardFocus = true;
 		mWidth = SCREEN_WIDTH;
 		mHeight = SCREEN_HEIGHT;
+
+		//Create renderer for window
+		mRenderer = SDL_CreateRenderer(mWindow, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+		if (mRenderer == NULL)
+		{
+			printf("Renderer could not be created! SDL Error: %s\n", SDL_GetError());
+			SDL_DestroyWindow(mWindow);
+			mWindow = NULL;
+		}
+		else
+		{
+			//Initialize renderer color
+			SDL_SetRenderDrawColor(mRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
+
+			//Grab window identifier
+			mWindowID = SDL_GetWindowID(mWindow);
+
+			//Flag as opened
+			mShown = true;
+		}
+	}
+	else
+	{
+		printf("Window could not be created! SDL Error: %s\n", SDL_GetError());
 	}
 
-	return mWindow != NULL;
-}
-
-SDL_Renderer* LWindow::createRenderer()
-{
-	return SDL_CreateRenderer(mWindow, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+	return mWindow != NULL && mRenderer != NULL;
 }
 
 void LWindow::handleEvent(SDL_Event& e)
 {
-	//Window event occured
-	if (e.type == SDL_WINDOWEVENT)
+	//If an event was detected for this window
+	if (e.type == SDL_WINDOWEVENT && e.window.windowID == mWindowID)
 	{
 		//Caption update flag
 		bool updateCaption = false;
 
 		switch (e.window.event)
 		{
-			//Get new dimensions and repaint on window size change
+			//Window appeared
+		case SDL_WINDOWEVENT_SHOWN:
+			mShown = true;
+			break;
+
+			//Window disappeared
+		case SDL_WINDOWEVENT_HIDDEN:
+			mShown = false;
+			break;
+
+			//Get new dimensions and repaint
 		case SDL_WINDOWEVENT_SIZE_CHANGED:
 			mWidth = e.window.data1;
 			mHeight = e.window.data2;
-			SDL_RenderPresent(gRenderer);
+			SDL_RenderPresent(mRenderer);
 			break;
 
-			//Repaint on exposure
+			//Repaint on expose
 		case SDL_WINDOWEVENT_EXPOSED:
-			SDL_RenderPresent(gRenderer);
+			SDL_RenderPresent(mRenderer);
 			break;
 
-			//Mouse entered window
+			//Mouse enter
 		case SDL_WINDOWEVENT_ENTER:
 			mMouseFocus = true;
 			updateCaption = true;
 			break;
 
-			//Mouse left window
+			//Mouse exit
 		case SDL_WINDOWEVENT_LEAVE:
 			mMouseFocus = false;
 			updateCaption = true;
 			break;
 
-			//Window has keyboard focus
+			//Keyboard focus gained
 		case SDL_WINDOWEVENT_FOCUS_GAINED:
 			mKeyboardFocus = true;
 			updateCaption = true;
 			break;
 
-			//Window lost keyboard focus
+			//Keyboard focus lost
 		case SDL_WINDOWEVENT_FOCUS_LOST:
 			mKeyboardFocus = false;
 			updateCaption = true;
@@ -359,30 +197,45 @@ void LWindow::handleEvent(SDL_Event& e)
 		case SDL_WINDOWEVENT_RESTORED:
 			mMinimized = false;
 			break;
+
+			//Hide on close
+		case SDL_WINDOWEVENT_CLOSE:
+			SDL_HideWindow(mWindow);
+			break;
 		}
 
 		//Update window caption with new data
 		if (updateCaption)
 		{
 			std::stringstream caption;
-			caption << "SDL Tutorial - MouseFocus:" << ((mMouseFocus) ? "On" : "Off") << " KeyboardFocus:" << ((mKeyboardFocus) ? "On" : "Off");
+			caption << "SDL Tutorial - ID: " << mWindowID << " MouseFocus:" << ((mMouseFocus) ? "On" : "Off") << " KeyboardFocus:" << ((mKeyboardFocus) ? "On" : "Off");
 			SDL_SetWindowTitle(mWindow, caption.str().c_str());
 		}
 	}
-	//Enter exit full screen on return key
-	else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RETURN)
+}
+
+void LWindow::focus()
+{
+	//Restore window if needed
+	if (!mShown)
 	{
-		if (mFullScreen)
-		{
-			SDL_SetWindowFullscreen(mWindow, SDL_FALSE);
-			mFullScreen = false;
-		}
-		else
-		{
-			SDL_SetWindowFullscreen(mWindow, SDL_TRUE);
-			mFullScreen = true;
-			mMinimized = false;
-		}
+		SDL_ShowWindow(mWindow);
+	}
+
+	//Move window forward
+	SDL_RaiseWindow(mWindow);
+}
+
+void LWindow::render()
+{
+	if (!mMinimized)
+	{
+		//Clear screen
+		SDL_SetRenderDrawColor(mRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
+		SDL_RenderClear(mRenderer);
+
+		//Update screen
+		SDL_RenderPresent(mRenderer);
 	}
 }
 
@@ -424,6 +277,11 @@ bool LWindow::isMinimized()
 	return mMinimized;
 }
 
+bool LWindow::isShown()
+{
+	return mShown;
+}
+
 bool init()
 {
 	//Initialization flag
@@ -444,49 +302,11 @@ bool init()
 		}
 
 		//Create window
-		if (!gWindow.init())
+		if (!gWindows[0].init())
 		{
-			printf("Window could not be created! SDL Error: %s\n", SDL_GetError());
+			printf("Window 0 could not be created!\n");
 			success = false;
 		}
-		else
-		{
-			//Create renderer for window
-			gRenderer = gWindow.createRenderer();
-			if (gRenderer == NULL)
-			{
-				printf("Renderer could not be created! SDL Error: %s\n", SDL_GetError());
-				success = false;
-			}
-			else
-			{
-				//Initialize renderer color
-				SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
-
-				//Initialize PNG loading
-				int imgFlags = IMG_INIT_PNG;
-				if (!(IMG_Init(imgFlags) & imgFlags))
-				{
-					printf("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
-					success = false;
-				}
-			}
-		}
-	}
-
-	return success;
-}
-
-bool loadMedia()
-{
-	//Loading success flag
-	bool success = true;
-
-	//Load scene texture
-	if (!gSceneTexture.loadFromFile("assets/window.png"))
-	{
-		printf("Failed to load window texture!\n");
-		success = false;
 	}
 
 	return success;
@@ -494,15 +314,13 @@ bool loadMedia()
 
 void close()
 {
-	//Free loaded images
-	gSceneTexture.free();
-
-	//Destroy window	
-	SDL_DestroyRenderer(gRenderer);
-	gWindow.free();
+	//Destroy windows
+	for (int i = 0; i < TOTAL_WINDOWS; ++i)
+	{
+		gWindows[i].free();
+	}
 
 	//Quit SDL subsystems
-	IMG_Quit();
 	SDL_Quit();
 }
 
@@ -515,48 +333,77 @@ int main(int argc, char* args[])
 	}
 	else
 	{
-		//Load media
-		if (!loadMedia())
+		//Initialize the rest of the windows
+		for (int i = 1; i < TOTAL_WINDOWS; ++i)
 		{
-			printf("Failed to load media!\n");
+			gWindows[i].init();
 		}
-		else
+
+		//Main loop flag
+		bool quit = false;
+
+		//Event handler
+		SDL_Event e;
+
+		//While application is running
+		while (!quit)
 		{
-			//Main loop flag
-			bool quit = false;
-
-			//Event handler
-			SDL_Event e;
-
-			//While application is running
-			while (!quit)
+			//Handle events on queue
+			while (SDL_PollEvent(&e) != 0)
 			{
-				//Handle events on queue
-				while (SDL_PollEvent(&e) != 0)
+				//User requests quit
+				if (e.type == SDL_QUIT)
 				{
-					//User requests quit
-					if (e.type == SDL_QUIT)
+					quit = true;
+				}
+
+				//Handle window events
+				for (int i = 0; i < TOTAL_WINDOWS; ++i)
+				{
+					gWindows[i].handleEvent(e);
+				}
+
+				//Pull up window
+				if (e.type == SDL_KEYDOWN)
+				{
+					switch (e.key.keysym.sym)
 					{
-						quit = true;
+					case SDLK_1:
+						gWindows[0].focus();
+						break;
+
+					case SDLK_2:
+						gWindows[1].focus();
+						break;
+
+					case SDLK_3:
+						gWindows[2].focus();
+						break;
 					}
-
-					//Handle window events
-					gWindow.handleEvent(e);
 				}
+			}
 
-				//Only draw when not minimized
-				if (!gWindow.isMinimized())
+			//Update all windows
+			for (int i = 0; i < TOTAL_WINDOWS; ++i)
+			{
+				gWindows[i].render();
+			}
+
+			//Check all windows
+			bool allWindowsClosed = true;
+			for (int i = 0; i < TOTAL_WINDOWS; ++i)
+			{
+				if (gWindows[i].isShown())
 				{
-					//Clear screen
-					SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
-					SDL_RenderClear(gRenderer);
-
-					//Render text textures
-					gSceneTexture.render((gWindow.getWidth() - gSceneTexture.getWidth()) / 2, (gWindow.getHeight() - gSceneTexture.getHeight()) / 2);
-
-					//Update screen
-					SDL_RenderPresent(gRenderer);
+					allWindowsClosed = false;
+					break;
 				}
+			}
+
+			//Application closed all windows
+			if (allWindowsClosed)
+			{
+				quit = true;
 			}
 		}
 	}
