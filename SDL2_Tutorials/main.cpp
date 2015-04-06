@@ -29,6 +29,9 @@ public:
 	bool loadFromRenderedText(std::string textureText, SDL_Color textColor);
 #endif
 
+	//Creates blank texture
+	bool createBlank(int width, int height);
+
 	//Deallocates texture
 	void free();
 
@@ -52,7 +55,9 @@ public:
 	bool lockTexture();
 	bool unlockTexture();
 	void* getPixels();
+	void copyPixels(void* pixels);
 	int getPitch();
+	Uint32 getPixel32(unsigned int x, unsigned int y);
 
 private:
 	//The actual hardware texture
@@ -63,6 +68,29 @@ private:
 	//Image dimensions
 	int mWidth;
 	int mHeight;
+};
+
+//A test animation stream
+class DataStream
+{
+public:
+	//Initializes internals
+	DataStream();
+
+	//Loads initial data
+	bool loadMedia();
+
+	//Deallocator
+	void free();
+
+	//Gets current frame data
+	void* getBuffer();
+
+private:
+	//Internal data
+	SDL_Surface* mImages[4];
+	int mCurrentImage;
+	int mDelayFrames;
 };
 
 //Starts up SDL and creates window
@@ -81,7 +109,10 @@ SDL_Window* gWindow = NULL;
 SDL_Renderer* gRenderer = NULL;
 
 //Scene textures
-LTexture gFooTexture;
+LTexture gStreamingTexture;
+
+//Animation stream
+DataStream gDataStream;
 
 LTexture::LTexture()
 {
@@ -116,34 +147,54 @@ bool LTexture::loadFromFile(std::string path)
 	else
 	{
 		//Convert surface to display format
-		SDL_Surface* formattedSurface = SDL_ConvertSurface(loadedSurface, SDL_GetWindowSurface(gWindow)->format, NULL);
+		SDL_Surface* formattedSurface = SDL_ConvertSurfaceFormat(loadedSurface, SDL_PIXELFORMAT_RGBA8888, NULL);
 		if (formattedSurface == NULL)
 		{
-			printf("Unable to convert loaded surface to display format! SDL Error: %s\n", SDL_GetError());
+			printf("Unable to convert loaded surface to display format! %s\n", SDL_GetError());
 		}
 		else
 		{
 			//Create blank streamable texture
-			newTexture = SDL_CreateTexture(gRenderer, SDL_GetWindowPixelFormat(gWindow), SDL_TEXTUREACCESS_STREAMING, formattedSurface->w, formattedSurface->h);
+			newTexture = SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, formattedSurface->w, formattedSurface->h);
 			if (newTexture == NULL)
 			{
 				printf("Unable to create blank texture! SDL Error: %s\n", SDL_GetError());
 			}
 			else
 			{
+				//Enable blending on texture
+				SDL_SetTextureBlendMode(newTexture, SDL_BLENDMODE_BLEND);
+
 				//Lock texture for manipulation
-				SDL_LockTexture(newTexture, NULL, &mPixels, &mPitch);
+				SDL_LockTexture(newTexture, &formattedSurface->clip_rect, &mPixels, &mPitch);
 
 				//Copy loaded/formatted surface pixels
 				memcpy(mPixels, formattedSurface->pixels, formattedSurface->pitch * formattedSurface->h);
 
-				//Unlock texture to update
-				SDL_UnlockTexture(newTexture);
-				mPixels = NULL;
-
 				//Get image dimensions
 				mWidth = formattedSurface->w;
 				mHeight = formattedSurface->h;
+
+				//Get pixel data in editable format
+				Uint32* pixels = (Uint32*)mPixels;
+				int pixelCount = (mPitch / 4) * mHeight;
+
+				//Map colors				
+				Uint32 colorKey = SDL_MapRGB(formattedSurface->format, 0, 0xFF, 0xFF);
+				Uint32 transparent = SDL_MapRGBA(formattedSurface->format, 0x00, 0xFF, 0xFF, 0x00);
+
+				//Color key pixels
+				for (int i = 0; i < pixelCount; ++i)
+				{
+					if (pixels[i] == colorKey)
+					{
+						pixels[i] = transparent;
+					}
+				}
+
+				//Unlock texture to update
+				SDL_UnlockTexture(newTexture);
+				mPixels = NULL;
 			}
 
 			//Get rid of old formatted surface
@@ -195,6 +246,23 @@ bool LTexture::loadFromRenderedText(std::string textureText, SDL_Color textColor
 	return mTexture != NULL;
 }
 #endif
+
+bool LTexture::createBlank(int width, int height)
+{
+	//Create uninitialized texture
+	mTexture = SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, width, height);
+	if (mTexture == NULL)
+	{
+		printf("Unable to create blank texture! SDL Error: %s\n", SDL_GetError());
+	}
+	else
+	{
+		mWidth = width;
+		mHeight = height;
+	}
+
+	return mTexture != NULL;
+}
 
 void LTexture::free()
 {
@@ -303,9 +371,90 @@ void* LTexture::getPixels()
 	return mPixels;
 }
 
+void LTexture::copyPixels(void* pixels)
+{
+	//Texture is locked
+	if (mPixels != NULL)
+	{
+		//Copy to locked pixels
+		memcpy(mPixels, pixels, mPitch * mHeight);
+	}
+}
+
 int LTexture::getPitch()
 {
 	return mPitch;
+}
+
+Uint32 LTexture::getPixel32(unsigned int x, unsigned int y)
+{
+	//Convert the pixels to 32 bit
+	Uint32 *pixels = (Uint32*)mPixels;
+
+	//Get the pixel requested
+	return pixels[(y * (mPitch / 4)) + x];
+}
+
+DataStream::DataStream()
+{
+	mImages[0] = NULL;
+	mImages[1] = NULL;
+	mImages[2] = NULL;
+	mImages[3] = NULL;
+
+	mCurrentImage = 0;
+	mDelayFrames = 4;
+}
+
+bool DataStream::loadMedia()
+{
+	bool success = true;
+
+	for (int i = 0; i < 4; ++i)
+	{
+		char path[64] = "";
+		sprintf_s(path, "assets/foo_walk_%d.png", i);
+
+		SDL_Surface* loadedSurface = IMG_Load(path);
+		if (loadedSurface == NULL)
+		{
+			printf("Unable to load %s! SDL_image error: %s\n", path, IMG_GetError());
+			success = false;
+		}
+		else
+		{
+			mImages[i] = SDL_ConvertSurfaceFormat(loadedSurface, SDL_PIXELFORMAT_RGBA8888, NULL);
+		}
+
+		SDL_FreeSurface(loadedSurface);
+	}
+
+	return success;
+}
+
+void DataStream::free()
+{
+	for (int i = 0; i < 4; ++i)
+	{
+		SDL_FreeSurface(mImages[i]);
+	}
+}
+
+void* DataStream::getBuffer()
+{
+	--mDelayFrames;
+	if (mDelayFrames == 0)
+	{
+		++mCurrentImage;
+		mDelayFrames = 4;
+	}
+
+	if (mCurrentImage == 4)
+	{
+		mCurrentImage = 0;
+	}
+
+	return mImages[mCurrentImage]->pixels;
 }
 
 bool init()
@@ -326,6 +475,9 @@ bool init()
 		{
 			printf("Warning: Linear texture filtering not enabled!");
 		}
+
+		//Seed random
+		srand(SDL_GetTicks());
 
 		//Create window
 		gWindow = SDL_CreateWindow("SDL Tutorial", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN);
@@ -367,42 +519,18 @@ bool loadMedia()
 	//Loading success flag
 	bool success = true;
 
-	//Load foo' texture
-	if (!gFooTexture.loadFromFile("assets/foo.png"))
+	//Load blank texture
+	if (!gStreamingTexture.createBlank(64, 205))
 	{
-		printf("Failed to load corner texture!\n");
+		printf("Failed to create streaming texture!\n");
 		success = false;
 	}
-	else
+
+	//Load data stream
+	if (!gDataStream.loadMedia())
 	{
-		//Lock texture
-		if (!gFooTexture.lockTexture())
-		{
-			printf("Unable to lock Foo' texture!\n");
-		}
-		//Manual color key
-		else
-		{
-			//Get pixel data
-			Uint32* pixels = (Uint32*)gFooTexture.getPixels();
-			int pixelCount = (gFooTexture.getPitch() / 4) * gFooTexture.getHeight();
-
-			//Map colors
-			Uint32 colorKey = SDL_MapRGB(SDL_GetWindowSurface(gWindow)->format, 0, 0xFF, 0xFF);
-			Uint32 transparent = SDL_MapRGBA(SDL_GetWindowSurface(gWindow)->format, 0xFF, 0xFF, 0xFF, 0x00);
-
-			//Color key pixels
-			for (int i = 0; i < pixelCount; ++i)
-			{
-				if (pixels[i] == colorKey)
-				{
-					pixels[i] = transparent;
-				}
-			}
-
-			//Unlock texture
-			gFooTexture.unlockTexture();
-		}
+		printf("Unable to load data stream!\n");
+		success = false;
 	}
 
 	return success;
@@ -411,7 +539,8 @@ bool loadMedia()
 void close()
 {
 	//Free loaded images
-	gFooTexture.free();
+	gStreamingTexture.free();
+	gDataStream.free();
 
 	//Destroy window	
 	SDL_DestroyRenderer(gRenderer);
@@ -463,8 +592,13 @@ int main(int argc, char* args[])
 				SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
 				SDL_RenderClear(gRenderer);
 
-				//Render stick figure
-				gFooTexture.render((SCREEN_WIDTH - gFooTexture.getWidth()) / 2, (SCREEN_HEIGHT - gFooTexture.getHeight()) / 2);
+				//Copy frame from buffer
+				gStreamingTexture.lockTexture();
+				gStreamingTexture.copyPixels(gDataStream.getBuffer());
+				gStreamingTexture.unlockTexture();
+
+				//Render frame
+				gStreamingTexture.render((SCREEN_WIDTH - gStreamingTexture.getWidth()) / 2, (SCREEN_HEIGHT - gStreamingTexture.getHeight()) / 2);
 
 				//Update screen
 				SDL_RenderPresent(gRenderer);
