@@ -1,8 +1,9 @@
 /*This source code copyrighted by Lazy Foo' Productions (2004-2015)
 and may not be redistributed without written permission.*/
 
-//Using SDL, SDL_image, standard IO, and, strings
+//Using SDL, SDL Threads, SDL_image, standard IO, and, strings
 #include <SDL.h>
+#include <SDL_thread.h>
 #include <SDL_image.h>
 #include <stdio.h>
 #include <string>
@@ -82,8 +83,8 @@ bool loadMedia();
 //Frees media and shuts down SDL
 void close();
 
-//Our test callback function
-Uint32 callback(Uint32 interval, void* param);
+//Our test thread function
+int threadFunction(void* data);
 
 //The window we'll be rendering to
 SDL_Window* gWindow = NULL;
@@ -387,7 +388,7 @@ bool init()
 	bool success = true;
 
 	//Initialize SDL
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0)
+	if (SDL_Init(SDL_INIT_VIDEO) < 0)
 	{
 		printf("SDL could not initialize! SDL Error: %s\n", SDL_GetError());
 		success = false;
@@ -444,7 +445,7 @@ bool loadMedia()
 	bool success = true;
 
 	//Load splash texture
-	if (!gSplashTexture.loadFromFile("assets/splash2.png"))
+	if (!gSplashTexture.loadFromFile("assets/splash3.png"))
 	{
 		printf("Failed to load splash texture!\n");
 		success = false;
@@ -469,10 +470,10 @@ void close()
 	SDL_Quit();
 }
 
-Uint32 callback(Uint32 interval, void* param)
+int threadFunction(void* data)
 {
-	//Print callback message
-	printf("Callback called back with message: %s\n", (char*)param);
+	//Print incoming data
+	printf("Running thread with value = %d\n", (int)data);
 
 	return 0;
 }
@@ -499,8 +500,9 @@ int main(int argc, char* args[])
 			//Event handler
 			SDL_Event e;
 
-			//Set callback
-			SDL_TimerID timerID = SDL_AddTimer(3 * 1000, callback, "3 seconds waited!");
+			//Run the thread
+			int data = 101;
+			SDL_Thread* threadID = SDL_CreateThread(threadFunction, "LazyThread", (void*)data);
 
 			//While application is running
 			while (!quit)
@@ -519,7 +521,7 @@ int main(int argc, char* args[])
 				SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
 				SDL_RenderClear(gRenderer);
 
-				//Render splash
+				//Render prompt
 				gSplashTexture.render(0, 0);
 
 				//Update screen
@@ -527,7 +529,7 @@ int main(int argc, char* args[])
 			}
 
 			//Remove timer in case the call back was not called
-			SDL_RemoveTimer(timerID);
+			SDL_WaitThread(threadID, NULL);
 		}
 	}
 
