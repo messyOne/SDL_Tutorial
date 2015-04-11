@@ -83,8 +83,8 @@ bool loadMedia();
 //Frees media and shuts down SDL
 void close();
 
-//Our test thread function
-int threadFunction(void* data);
+//Our worker thread function
+int worker(void* data);
 
 //The window we'll be rendering to
 SDL_Window* gWindow = NULL;
@@ -94,6 +94,12 @@ SDL_Renderer* gRenderer = NULL;
 
 //Scene textures
 LTexture gSplashTexture;
+
+//Data access semaphore
+SDL_sem* gDataLock = NULL;
+
+//The "data buffer"
+int gData = -1;
 
 LTexture::LTexture()
 {
@@ -401,9 +407,6 @@ bool init()
 			printf("Warning: Linear texture filtering not enabled!");
 		}
 
-		//Seed random
-		srand(SDL_GetTicks());
-
 		//Create window
 		gWindow = SDL_CreateWindow("SDL Tutorial", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN);
 		if (gWindow == NULL)
@@ -429,7 +432,7 @@ bool init()
 				int imgFlags = IMG_INIT_PNG;
 				if (!(IMG_Init(imgFlags) & imgFlags))
 				{
-					printf("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
+					printf("SDL_image could not initialize! %s\n", IMG_GetError());
 					success = false;
 				}
 			}
@@ -441,11 +444,14 @@ bool init()
 
 bool loadMedia()
 {
+	//Initialize semaphore
+	gDataLock = SDL_CreateSemaphore(1);
+
 	//Loading success flag
 	bool success = true;
 
 	//Load splash texture
-	if (!gSplashTexture.loadFromFile("assets/splash3.png"))
+	if (!gSplashTexture.loadFromFile("assets/splash4.png"))
 	{
 		printf("Failed to load splash texture!\n");
 		success = false;
@@ -459,6 +465,10 @@ void close()
 	//Free loaded images
 	gSplashTexture.free();
 
+	//Free semaphore
+	SDL_DestroySemaphore(gDataLock);
+	gDataLock = NULL;
+
 	//Destroy window	
 	SDL_DestroyRenderer(gRenderer);
 	SDL_DestroyWindow(gWindow);
@@ -470,13 +480,43 @@ void close()
 	SDL_Quit();
 }
 
-int threadFunction(void* data)
+int worker(void* data)
 {
-	//Print incoming data
-	printf("Running thread with value = %d\n", (int)data);
+	printf("%s starting...\n", data);
+
+	//Pre thread random seeding
+	srand(SDL_GetTicks());
+
+	//Work 5 times
+	for (int i = 0; i < 5; ++i)
+	{
+		//Wait randomly
+		SDL_Delay(16 + rand() % 32);
+
+		//Lock
+		SDL_SemWait(gDataLock);
+
+		//Print pre work data
+		printf("%s gets %d\n", data, gData);
+
+		//"Work"
+		gData = rand() % 256;
+
+		//Print post work data
+		printf("%s sets %d\n\n", data, gData);
+
+		//Unlock
+		SDL_SemPost(gDataLock);
+
+		//Wait randomly
+		SDL_Delay(16 + rand() % 640);
+	}
+
+	printf("%s finished!\n\n", data);
 
 	return 0;
 }
+
 
 int main(int argc, char* args[])
 {
@@ -500,9 +540,11 @@ int main(int argc, char* args[])
 			//Event handler
 			SDL_Event e;
 
-			//Run the thread
-			int data = 101;
-			SDL_Thread* threadID = SDL_CreateThread(threadFunction, "LazyThread", (void*)data);
+			//Run the threads
+			srand(SDL_GetTicks());
+			SDL_Thread* threadA = SDL_CreateThread(worker, "Thread A", (void*)"Thread A");
+			SDL_Delay(16 + rand() % 32);
+			SDL_Thread* threadB = SDL_CreateThread(worker, "Thread B", (void*)"Thread B");
 
 			//While application is running
 			while (!quit)
@@ -521,15 +563,16 @@ int main(int argc, char* args[])
 				SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
 				SDL_RenderClear(gRenderer);
 
-				//Render prompt
+				//Render splash
 				gSplashTexture.render(0, 0);
 
 				//Update screen
 				SDL_RenderPresent(gRenderer);
 			}
 
-			//Remove timer in case the call back was not called
-			SDL_WaitThread(threadID, NULL);
+			//Wait for threads to finish
+			SDL_WaitThread(threadA, NULL);
+			SDL_WaitThread(threadB, NULL);
 		}
 	}
 
