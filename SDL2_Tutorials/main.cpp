@@ -1,8 +1,9 @@
 /*This source code copyrighted by Lazy Foo' Productions (2004-2015)
 and may not be redistributed without written permission.*/
 
-//Using SDL, SDL_image, standard IO, and strings
+//Using SDL, SDL Threads, SDL_image, standard IO, and, strings
 #include <SDL.h>
+#include <SDL_thread.h>
 #include <SDL_image.h>
 #include <stdio.h>
 #include <string>
@@ -10,9 +11,6 @@ and may not be redistributed without written permission.*/
 //Screen dimension constants
 const int SCREEN_WIDTH = 640;
 const int SCREEN_HEIGHT = 480;
-
-//Particle count
-const int TOTAL_PARTICLES = 20;
 
 //Texture wrapper class
 class LTexture
@@ -32,6 +30,9 @@ public:
 	bool loadFromRenderedText(std::string textureText, SDL_Color textColor);
 #endif
 
+	//Creates blank texture
+	bool createBlank(int width, int height, SDL_TextureAccess = SDL_TEXTUREACCESS_STREAMING);
+
 	//Deallocates texture
 	void free();
 
@@ -47,81 +48,30 @@ public:
 	//Renders texture at given point
 	void render(int x, int y, SDL_Rect* clip = NULL, double angle = 0.0, SDL_Point* center = NULL, SDL_RendererFlip flip = SDL_FLIP_NONE);
 
+	//Set self as render target
+	void setAsRenderTarget();
+
 	//Gets image dimensions
 	int getWidth();
 	int getHeight();
 
+	//Pixel manipulators
+	bool lockTexture();
+	bool unlockTexture();
+	void* getPixels();
+	void copyPixels(void* pixels);
+	int getPitch();
+	Uint32 getPixel32(unsigned int x, unsigned int y);
+
 private:
 	//The actual hardware texture
 	SDL_Texture* mTexture;
+	void* mPixels;
+	int mPitch;
 
 	//Image dimensions
 	int mWidth;
 	int mHeight;
-};
-
-class Particle
-{
-public:
-	//Initialize position and animation
-	Particle(int x, int y);
-
-	//Shows the particle
-	void render();
-
-	//Checks if particle is dead
-	bool isDead();
-
-private:
-	//Offsets
-	int mPosX, mPosY;
-
-	//Current frame of animation
-	int mFrame;
-
-	//Type of particle
-	LTexture *mTexture;
-};
-
-
-//The dot that will move around on the screen
-class Dot
-{
-public:
-	//The dimensions of the dot
-	static const int DOT_WIDTH = 20;
-	static const int DOT_HEIGHT = 20;
-
-	//Maximum axis velocity of the dot
-	static const int DOT_VEL = 10;
-
-	//Initializes the variables and allocates particles
-	Dot();
-
-	//Deallocates particles
-	~Dot();
-
-	//Takes key presses and adjusts the dot's velocity
-	void handleEvent(SDL_Event& e);
-
-	//Moves the dot
-	void move();
-
-	//Shows the dot on the screen
-	void render();
-
-private:
-	//The particles
-	Particle* particles[TOTAL_PARTICLES];
-
-	//Shows the particles
-	void renderParticles();
-
-	//The X and Y offsets of the dot
-	int mPosX, mPosY;
-
-	//The velocity of the dot
-	int mVelX, mVelY;
 };
 
 //Starts up SDL and creates window
@@ -133,6 +83,9 @@ bool loadMedia();
 //Frees media and shuts down SDL
 void close();
 
+//Our worker thread function
+int worker(void* data);
+
 //The window we'll be rendering to
 SDL_Window* gWindow = NULL;
 
@@ -140,11 +93,13 @@ SDL_Window* gWindow = NULL;
 SDL_Renderer* gRenderer = NULL;
 
 //Scene textures
-LTexture gDotTexture;
-LTexture gRedTexture;
-LTexture gGreenTexture;
-LTexture gBlueTexture;
-LTexture gShimmerTexture;
+LTexture gSplashTexture;
+
+//Data access semaphore
+SDL_sem* gDataLock = NULL;
+
+//The "data buffer"
+int gData = -1;
 
 LTexture::LTexture()
 {
@@ -152,6 +107,8 @@ LTexture::LTexture()
 	mTexture = NULL;
 	mWidth = 0;
 	mHeight = 0;
+	mPixels = NULL;
+	mPitch = 0;
 }
 
 LTexture::~LTexture()
@@ -176,20 +133,59 @@ bool LTexture::loadFromFile(std::string path)
 	}
 	else
 	{
-		//Color key image
-		SDL_SetColorKey(loadedSurface, SDL_TRUE, SDL_MapRGB(loadedSurface->format, 0, 0xFF, 0xFF));
-
-		//Create texture from surface pixels
-		newTexture = SDL_CreateTextureFromSurface(gRenderer, loadedSurface);
-		if (newTexture == NULL)
+		//Convert surface to display format
+		SDL_Surface* formattedSurface = SDL_ConvertSurfaceFormat(loadedSurface, SDL_PIXELFORMAT_RGBA8888, NULL);
+		if (formattedSurface == NULL)
 		{
-			printf("Unable to create texture from %s! SDL Error: %s\n", path.c_str(), SDL_GetError());
+			printf("Unable to convert loaded surface to display format! %s\n", SDL_GetError());
 		}
 		else
 		{
-			//Get image dimensions
-			mWidth = loadedSurface->w;
-			mHeight = loadedSurface->h;
+			//Create blank streamable texture
+			newTexture = SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, formattedSurface->w, formattedSurface->h);
+			if (newTexture == NULL)
+			{
+				printf("Unable to create blank texture! SDL Error: %s\n", SDL_GetError());
+			}
+			else
+			{
+				//Enable blending on texture
+				SDL_SetTextureBlendMode(newTexture, SDL_BLENDMODE_BLEND);
+
+				//Lock texture for manipulation
+				SDL_LockTexture(newTexture, &formattedSurface->clip_rect, &mPixels, &mPitch);
+
+				//Copy loaded/formatted surface pixels
+				memcpy(mPixels, formattedSurface->pixels, formattedSurface->pitch * formattedSurface->h);
+
+				//Get image dimensions
+				mWidth = formattedSurface->w;
+				mHeight = formattedSurface->h;
+
+				//Get pixel data in editable format
+				Uint32* pixels = (Uint32*)mPixels;
+				int pixelCount = (mPitch / 4) * mHeight;
+
+				//Map colors				
+				Uint32 colorKey = SDL_MapRGB(formattedSurface->format, 0, 0xFF, 0xFF);
+				Uint32 transparent = SDL_MapRGBA(formattedSurface->format, 0x00, 0xFF, 0xFF, 0x00);
+
+				//Color key pixels
+				for (int i = 0; i < pixelCount; ++i)
+				{
+					if (pixels[i] == colorKey)
+					{
+						pixels[i] = transparent;
+					}
+				}
+
+				//Unlock texture to update
+				SDL_UnlockTexture(newTexture);
+				mPixels = NULL;
+			}
+
+			//Get rid of old formatted surface
+			SDL_FreeSurface(formattedSurface);
 		}
 
 		//Get rid of old loaded surface
@@ -238,6 +234,23 @@ bool LTexture::loadFromRenderedText(std::string textureText, SDL_Color textColor
 }
 #endif
 
+bool LTexture::createBlank(int width, int height, SDL_TextureAccess access)
+{
+	//Create uninitialized texture
+	mTexture = SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_RGBA8888, access, width, height);
+	if (mTexture == NULL)
+	{
+		printf("Unable to create blank texture! SDL Error: %s\n", SDL_GetError());
+	}
+	else
+	{
+		mWidth = width;
+		mHeight = height;
+	}
+
+	return mTexture != NULL;
+}
+
 void LTexture::free()
 {
 	//Free texture if it exists
@@ -247,6 +260,8 @@ void LTexture::free()
 		mTexture = NULL;
 		mWidth = 0;
 		mHeight = 0;
+		mPixels = NULL;
+		mPitch = 0;
 	}
 }
 
@@ -284,6 +299,12 @@ void LTexture::render(int x, int y, SDL_Rect* clip, double angle, SDL_Point* cen
 	SDL_RenderCopyEx(gRenderer, mTexture, clip, &renderQuad, angle, center, flip);
 }
 
+void LTexture::setAsRenderTarget()
+{
+	//Make self render target
+	SDL_SetRenderTarget(gRenderer, mTexture);
+}
+
 int LTexture::getWidth()
 {
 	return mWidth;
@@ -294,148 +315,77 @@ int LTexture::getHeight()
 	return mHeight;
 }
 
-Particle::Particle(int x, int y)
+bool LTexture::lockTexture()
 {
-	//Set offsets
-	mPosX = x - 5 + (rand() % 25);
-	mPosY = y - 5 + (rand() % 25);
+	bool success = true;
 
-	//Initialize animation
-	mFrame = rand() % 5;
-
-	//Set type
-	switch (rand() % 3)
+	//Texture is already locked
+	if (mPixels != NULL)
 	{
-	case 0: mTexture = &gRedTexture; break;
-	case 1: mTexture = &gGreenTexture; break;
-	case 2: mTexture = &gBlueTexture; break;
+		printf("Texture is already locked!\n");
+		success = false;
 	}
-}
-
-void Particle::render()
-{
-	//Show image
-	mTexture->render(mPosX, mPosY);
-
-	//Show shimmer
-	if (mFrame % 2 == 0)
+	//Lock texture
+	else
 	{
-		gShimmerTexture.render(mPosX, mPosY);
-	}
-
-	//Animate
-	mFrame++;
-}
-
-bool Particle::isDead()
-{
-	return mFrame > 10;
-}
-
-Dot::Dot()
-{
-	//Initialize the offsets
-	mPosX = 0;
-	mPosY = 0;
-
-	//Initialize the velocity
-	mVelX = 0;
-	mVelY = 0;
-
-	//Initialize particles
-	for (int i = 0; i < TOTAL_PARTICLES; ++i)
-	{
-		particles[i] = new Particle(mPosX, mPosY);
-	}
-}
-
-Dot::~Dot()
-{
-	//Delete particles
-	for (int i = 0; i < TOTAL_PARTICLES; ++i)
-	{
-		delete particles[i];
-	}
-}
-
-void Dot::handleEvent(SDL_Event& e)
-{
-	//If a key was pressed
-	if (e.type == SDL_KEYDOWN && e.key.repeat == 0)
-	{
-		//Adjust the velocity
-		switch (e.key.keysym.sym)
+		if (SDL_LockTexture(mTexture, NULL, &mPixels, &mPitch) != 0)
 		{
-		case SDLK_UP: mVelY -= DOT_VEL; break;
-		case SDLK_DOWN: mVelY += DOT_VEL; break;
-		case SDLK_LEFT: mVelX -= DOT_VEL; break;
-		case SDLK_RIGHT: mVelX += DOT_VEL; break;
-		}
-	}
-	//If a key was released
-	else if (e.type == SDL_KEYUP && e.key.repeat == 0)
-	{
-		//Adjust the velocity
-		switch (e.key.keysym.sym)
-		{
-		case SDLK_UP: mVelY += DOT_VEL; break;
-		case SDLK_DOWN: mVelY -= DOT_VEL; break;
-		case SDLK_LEFT: mVelX += DOT_VEL; break;
-		case SDLK_RIGHT: mVelX -= DOT_VEL; break;
-		}
-	}
-}
-
-void Dot::move()
-{
-	//Move the dot left or right
-	mPosX += mVelX;
-
-	//If the dot went too far to the left or right
-	if ((mPosX < 0) || (mPosX + DOT_WIDTH > SCREEN_WIDTH))
-	{
-		//Move back
-		mPosX -= mVelX;
-	}
-
-	//Move the dot up or down
-	mPosY += mVelY;
-
-	//If the dot went too far up or down
-	if ((mPosY < 0) || (mPosY + DOT_HEIGHT > SCREEN_HEIGHT))
-	{
-		//Move back
-		mPosY -= mVelY;
-	}
-}
-
-void Dot::render()
-{
-	//Show the dot
-	gDotTexture.render(mPosX, mPosY);
-
-	//Show particles on top of dot
-	renderParticles();
-}
-
-void Dot::renderParticles()
-{
-	//Go through particles
-	for (int i = 0; i < TOTAL_PARTICLES; ++i)
-	{
-		//Delete and replace dead particles
-		if (particles[i]->isDead())
-		{
-			delete particles[i];
-			particles[i] = new Particle(mPosX, mPosY);
+			printf("Unable to lock texture! %s\n", SDL_GetError());
+			success = false;
 		}
 	}
 
-	//Show particles
-	for (int i = 0; i < TOTAL_PARTICLES; ++i)
+	return success;
+}
+
+bool LTexture::unlockTexture()
+{
+	bool success = true;
+
+	//Texture is not locked
+	if (mPixels == NULL)
 	{
-		particles[i]->render();
+		printf("Texture is not locked!\n");
+		success = false;
 	}
+	//Unlock texture
+	else
+	{
+		SDL_UnlockTexture(mTexture);
+		mPixels = NULL;
+		mPitch = 0;
+	}
+
+	return success;
+}
+
+void* LTexture::getPixels()
+{
+	return mPixels;
+}
+
+void LTexture::copyPixels(void* pixels)
+{
+	//Texture is locked
+	if (mPixels != NULL)
+	{
+		//Copy to locked pixels
+		memcpy(mPixels, pixels, mPitch * mHeight);
+	}
+}
+
+int LTexture::getPitch()
+{
+	return mPitch;
+}
+
+Uint32 LTexture::getPixel32(unsigned int x, unsigned int y)
+{
+	//Convert the pixels to 32 bit
+	Uint32 *pixels = (Uint32*)mPixels;
+
+	//Get the pixel requested
+	return pixels[(y * (mPitch / 4)) + x];
 }
 
 bool init()
@@ -482,7 +432,7 @@ bool init()
 				int imgFlags = IMG_INIT_PNG;
 				if (!(IMG_Init(imgFlags) & imgFlags))
 				{
-					printf("SDL_image could not initialize! SDL_image Error: %s\n", IMG_GetError());
+					printf("SDL_image could not initialize! %s\n", IMG_GetError());
 					success = false;
 				}
 			}
@@ -494,49 +444,18 @@ bool init()
 
 bool loadMedia()
 {
+	//Initialize semaphore
+	gDataLock = SDL_CreateSemaphore(1);
+
 	//Loading success flag
 	bool success = true;
 
-	//Load dot texture
-	if (!gDotTexture.loadFromFile("assets/dot.bmp"))
+	//Load splash texture
+	if (!gSplashTexture.loadFromFile("assets/splash4.png"))
 	{
-		printf("Failed to load dot texture!\n");
+		printf("Failed to load splash texture!\n");
 		success = false;
 	}
-
-	//Load red texture
-	if (!gRedTexture.loadFromFile("assets/red.bmp"))
-	{
-		printf("Failed to load red texture!\n");
-		success = false;
-	}
-
-	//Load green texture
-	if (!gGreenTexture.loadFromFile("assets/green.bmp"))
-	{
-		printf("Failed to load green texture!\n");
-		success = false;
-	}
-
-	//Load blue texture
-	if (!gBlueTexture.loadFromFile("assets/blue.bmp"))
-	{
-		printf("Failed to load blue texture!\n");
-		success = false;
-	}
-
-	//Load shimmer texture
-	if (!gShimmerTexture.loadFromFile("assets/shimmer.bmp"))
-	{
-		printf("Failed to load shimmer texture!\n");
-		success = false;
-	}
-
-	//Set texture transparency
-	gRedTexture.setAlpha(192);
-	gGreenTexture.setAlpha(192);
-	gBlueTexture.setAlpha(192);
-	gShimmerTexture.setAlpha(192);
 
 	return success;
 }
@@ -544,11 +463,11 @@ bool loadMedia()
 void close()
 {
 	//Free loaded images
-	gDotTexture.free();
-	gRedTexture.free();
-	gGreenTexture.free();
-	gBlueTexture.free();
-	gShimmerTexture.free();
+	gSplashTexture.free();
+
+	//Free semaphore
+	SDL_DestroySemaphore(gDataLock);
+	gDataLock = NULL;
 
 	//Destroy window	
 	SDL_DestroyRenderer(gRenderer);
@@ -560,6 +479,44 @@ void close()
 	IMG_Quit();
 	SDL_Quit();
 }
+
+int worker(void* data)
+{
+	printf("%s starting...\n", data);
+
+	//Pre thread random seeding
+	srand(SDL_GetTicks());
+
+	//Work 5 times
+	for (int i = 0; i < 5; ++i)
+	{
+		//Wait randomly
+		SDL_Delay(16 + rand() % 32);
+
+		//Lock
+		SDL_SemWait(gDataLock);
+
+		//Print pre work data
+		printf("%s gets %d\n", data, gData);
+
+		//"Work"
+		gData = rand() % 256;
+
+		//Print post work data
+		printf("%s sets %d\n\n", data, gData);
+
+		//Unlock
+		SDL_SemPost(gDataLock);
+
+		//Wait randomly
+		SDL_Delay(16 + rand() % 640);
+	}
+
+	printf("%s finished!\n\n", data);
+
+	return 0;
+}
+
 
 int main(int argc, char* args[])
 {
@@ -583,8 +540,11 @@ int main(int argc, char* args[])
 			//Event handler
 			SDL_Event e;
 
-			//The dot that will be moving around on the screen
-			Dot dot;
+			//Run the threads
+			srand(SDL_GetTicks());
+			SDL_Thread* threadA = SDL_CreateThread(worker, "Thread A", (void*)"Thread A");
+			SDL_Delay(16 + rand() % 32);
+			SDL_Thread* threadB = SDL_CreateThread(worker, "Thread B", (void*)"Thread B");
 
 			//While application is running
 			while (!quit)
@@ -597,24 +557,22 @@ int main(int argc, char* args[])
 					{
 						quit = true;
 					}
-
-					//Handle input for the dot
-					dot.handleEvent(e);
 				}
-
-				//Move the dot
-				dot.move();
 
 				//Clear screen
 				SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
 				SDL_RenderClear(gRenderer);
 
-				//Render objects
-				dot.render();
+				//Render splash
+				gSplashTexture.render(0, 0);
 
 				//Update screen
 				SDL_RenderPresent(gRenderer);
 			}
+
+			//Wait for threads to finish
+			SDL_WaitThread(threadA, NULL);
+			SDL_WaitThread(threadB, NULL);
 		}
 	}
 
